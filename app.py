@@ -41,7 +41,7 @@ def accumulate_products(driver, pause_time=2, max_attempts=20):
                     "nombre": title,
                     "precio": price,
                     "precio_por_litro": price_per_liter,
-                    "en_promocion": in_promotion,
+                    "en_promocion": not in_promotion,
                     "disponible": available
                 }
                 print(f"✅ Producto agregado: {title}")
