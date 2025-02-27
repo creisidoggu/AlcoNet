@@ -6,47 +6,36 @@ from webdriver_manager.chrome import ChromeDriverManager
 import json
 import time
 
-def accumulate_products(driver, pause_time=5, max_attempts=5):
+def accumulate_products(driver, pause_time=2, max_attempts=20):
     """
-    Acumula productos haciendo scroll hasta que no se carguen nuevos productos
-    durante 'max_attempts' consecutivos. Además, si se detecta un botón de "Cargar más",
-    se simula un clic para forzar la carga de más elementos.
+    Acumula los productos mientras se hace scroll en la ventana.
+    Debido a la virtualización, el DOM solo muestra una parte de los productos a la vez,
+    por lo que se recogen los datos de los elementos visibles en cada iteración.
     """
     collected = {}  # Usamos el título como clave para evitar duplicados
     attempts = 0
-    last_count = 0
+    last_total = 0
 
     while attempts < max_attempts:
-        # Hacemos scroll hasta el final de la página
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(pause_time)
-        
-        # Si existe un botón "Cargar más", se hace clic en él
         try:
-            load_more = driver.find_element(By.CSS_SELECTOR, "button.load-more, a.load-more")
-            if load_more:
-                load_more.click()
-                print("Botón 'Cargar más' encontrado y clickeado")
-                time.sleep(pause_time)
-        except Exception:
-            # Si no se encuentra, se continúa con el scroll
-            pass
-        
-        # Buscar los productos actualmente visibles
-        products = driver.find_elements(By.CSS_SELECTOR, "div[data-test^='fop-wrapper']")
-        print(f"Se encontraron {len(products)} elementos visibles")
+            parent = driver.find_element(By.CSS_SELECTOR, "div[data-retailer-anchor='product-list']")
+            products = parent.find_elements(By.CSS_SELECTOR, "div[data-test^='fop-wrapper']")
+        except Exception as e:
+            print("❌ Error al localizar el contenedor de productos:", e)
+            products = []
 
+        # Recorrer los productos visibles y acumular su información
         for product in products:
             try:
                 title = product.find_element(By.CSS_SELECTOR, "h3[data-test='fop-title']").text.strip()
                 if title in collected:
-                    continue
+                    continue  # Ya fue procesado
                 price = product.find_element(By.CSS_SELECTOR, "span[data-test='fop-price']").text.strip()
                 try:
                     price_per_liter = product.find_element(By.CSS_SELECTOR, "span[data-test='fop-price-per-unit']").text.strip()
                 except:
                     price_per_liter = "No disponible"
-                in_promotion = not bool(product.find_elements(By.CSS_SELECTOR, "div.promotion-container"))
+                in_promotion = bool(product.find_elements(By.CSS_SELECTOR, "div.promotion-container"))
                 available = bool(product.find_elements(By.CSS_SELECTOR, "div.footer-container"))
                 collected[title] = {
                     "nombre": title,
@@ -55,31 +44,36 @@ def accumulate_products(driver, pause_time=5, max_attempts=5):
                     "en_promocion": in_promotion,
                     "disponible": available
                 }
-                print(f"Producto agregado: {title}")
+                print(f"✅ Producto agregado: {title}")
             except Exception as e:
                 print("❌ Error procesando un producto:", e)
-
-        # Comprobar si se han cargado nuevos productos
-        if len(collected) == last_count:
+        
+        current_total = len(collected)
+        print(f"Total acumulado hasta ahora: {current_total}")
+        
+        if current_total == last_total:
             attempts += 1
-            print(f"No se detectaron nuevos productos. Intento {attempts} de {max_attempts}.")
         else:
-            attempts = 0  # Reiniciamos si se cargaron nuevos productos
-            last_count = len(collected)
+            attempts = 0
+            last_total = current_total
 
+        # Realiza un pequeño scroll en la ventana para cargar nuevos productos
+        driver.execute_script("window.scrollBy(0, 300);")
+        time.sleep(pause_time)
+    
+    print(f"✅ Acumulación finalizada. Total productos acumulados: {len(collected)}")
     return list(collected.values())
 
-
-def process_link(driver, url, product_type, pause_time=3, max_attempts=3):
+def process_link(driver, url, product_type):
     """
-    Procesa un link, acumula la información de los productos y la guarda
-    en un archivo JSON nombrado según el tipo de producto.
+    Carga la URL, acumula los productos (mientras se hace scroll) y guarda los datos en un JSON.
     """
-    print(f"Procesando productos de tipo: {product_type}")
+    print(f"📡 Procesando productos de tipo: {product_type}")
     driver.get(url)
-    time.sleep(6)  # Espera a que la página cargue completamente
-    products_data = accumulate_products(driver, pause_time, max_attempts)
-    print(f"🔎 Se han acumulado {len(products_data)} productos para {product_type}.")
+    time.sleep(6)  # Espera inicial para que la página cargue completamente
+
+    products_data = accumulate_products(driver, pause_time=2, max_attempts=20)
+    print(f"📊 Se han acumulado {len(products_data)} productos para {product_type}.")
     
     # Guardar los datos en un archivo JSON
     filename = f"{product_type}.json"
@@ -89,58 +83,19 @@ def process_link(driver, url, product_type, pause_time=3, max_attempts=3):
 
 def scrape_all_data():
     """
-    Inicializa el driver y recorre un array de links para procesarlos según su tipo.
+    Inicializa el driver y procesa la(s) categoría(s) especificada(s).
     """
     options = Options()
-    options.headless = False  # Cambia a True si prefieres modo headless
+    options.headless = False  # Cambia a True para modo headless
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
 
-    # Array de links con su correspondiente tipo de producto
+    # Procesamos la categoría (en este ejemplo, alcoholes)
     links = [
-        {
-            "type": "alcohols",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/bebidas-alcoh%C3%B3licas/OC1154"
-        },
-        {
-            "type": "juices",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/zumos-de-frutas/OC1102?source=navigation"
-        },
-        {
-            "type": "beers",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/cervezas/OC1107?source=navigation"
-        },
-        {
-            "type": "wines_t",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/vino-tinto/OC1151?source=navigation"
-        },
-        {
-            "type": "wines_w",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/vino-blanco/OC1152?source=navigation"
-        },
-        {
-            "type": "champagne",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/champagne-cavas-y-sidras/OC1156?source=navigation"
-        },
-        {
-            "type": "wine_r",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/vino-rosados-frizzantes-dulces-y-olorosos/OC1153?source=navigation"
-        },
-        {
-            "type": "licours",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/licores/OC1155?source=navigation"
-        },
-        {
-            "type": "sodas",
-            "url": "https://www.compraonline.alcampo.es/categories/bebidas/refrescos/OC1103?source=navigation"
-        },
-        {
-            "type": "sugars",
-            "url": "https://www.compraonline.alcampo.es/categories/desayuno-y-merienda/az%C3%BAcar-miel-y-otros-edulcorantes/OCAzucaryedulcorante?source=navigation"
-        }
-        # Agrega más links y tipos de productos según sea necesario
+        {"type": "alcohols", "url": "https://www.compraonline.alcampo.es/categories/bebidas/bebidas-alcoh%C3%B3licas/OC1154"},
+        {"type": "sodas", "url": "https://www.compraonline.alcampo.es/categories/bebidas/refrescos/OC1103"},
     ]
-
+    
     try:
         for item in links:
             process_link(driver, item["url"], item["type"])
@@ -150,4 +105,11 @@ def scrape_all_data():
         driver.quit()
 
 if __name__ == "__main__":
+    # Inicia el temporizador
+    start_time = time.time()
+
     scrape_all_data()
+
+    # Calcula y muestra el tiempo de ejecución
+    elapsed_time = time.time() - start_time
+    print(f"⏱ El programa terminó en {elapsed_time:.2f} segundos.")
